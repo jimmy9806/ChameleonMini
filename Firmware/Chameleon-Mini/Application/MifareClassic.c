@@ -380,6 +380,13 @@ INLINE void ValueToBlock(uint8_t* Block, uint32_t Value)
     Block[10] = Block[2];
     Block[11] = Block[3];
 }
+void FM11RF005SHAppInit(void)
+{
+    State = STATE_IDLE;
+    CardATQAValue = 0x0003;//rf005sh
+    CardSAKValue = 0x0a;//rf005sh
+    FromHalt = false;
+}
 
 void MifareClassicAppInit1K(void)
 {
@@ -1055,6 +1062,148 @@ uint16_t MifareClassicAppProcess(uint8_t* Buffer, uint16_t BitCount)
         break;
     }
 
+    /* No response has been sent, when we reach here */
+    return ISO14443A_APP_NO_RESPONSE;
+}
+
+uint16_t FM11RF005SHAppProcess(uint8_t* Buffer, uint16_t BitCount)
+{
+    switch(State) {
+        case STATE_IDLE:
+        case STATE_HALT:
+            FromHalt = State == STATE_HALT;
+            if (ISO14443AWakeUp(Buffer, &BitCount, CardATQAValue, FromHalt)) {
+                State = STATE_READY1;
+                return BitCount;
+            }
+            break;
+            
+        case STATE_READY1:
+            if (ISO14443AWakeUp(Buffer, &BitCount, CardATQAValue, FromHalt)) {
+                State = FromHalt ? STATE_HALT : STATE_IDLE;
+                return ISO14443A_APP_NO_RESPONSE;
+            } else if (Buffer[0] == ISO14443A_CMD_SELECT_CL1) {
+                uint8_t UidCL1[ISO14443A_CL_UID_SIZE];
+                MemoryReadBlock(UidCL1, MEM_UID_CL1_ADDRESS, MEM_UID_CL1_SIZE);
+                if (ISO14443ASelect(Buffer, &BitCount, UidCL1, CardSAKValue)) {
+                    AccessAddress = 0xff; /* invalid, force reload */
+                    State = STATE_ACTIVE;
+                }
+                return BitCount;
+            } else {
+                /* Unknown command. Enter HALT state. */
+                State = STATE_HALT;
+            }
+            
+        case STATE_ACTIVE:
+            if (ISO14443AWakeUp(Buffer, &BitCount, CardATQAValue, FromHalt)) {
+                State = FromHalt ? STATE_HALT : STATE_IDLE;
+                return ISO14443A_APP_NO_RESPONSE;
+            } else if (Buffer[0] == CMD_HALT) {
+                /* Halts the tag. According to the ISO14443, the second
+                 * byte is supposed to be 0. */
+                if (Buffer[1] == 0) {
+                    if (ISO14443ACheckCRCA(Buffer, CMD_HALT_FRAME_SIZE)) {
+                        /* According to ISO14443, we must not send anything
+                         * in order to acknowledge the HALT command. */
+                        LogEntry(LOG_INFO_APP_CMD_HALT, NULL, 0);
+                        
+                        State = STATE_HALT;
+                        return ISO14443A_APP_NO_RESPONSE;
+                    } else {
+                        Buffer[0] = NAK_CRC_ERROR;
+                        return ACK_NAK_FRAME_SIZE;
+                    }
+                } else {
+                    Buffer[0] = NAK_INVALID_ARG;
+                    return ACK_NAK_FRAME_SIZE;
+                }
+            } else if ((Buffer[0] == CMD_READ) && (Buffer[1] == 0x01)) {//READ UID
+                if (ISO14443ACheckCRCA(Buffer, CMD_READ_FRAME_SIZE)) {
+                    //READ UID
+                    MemoryReadBlock(Buffer, MEM_UID_CL1_ADDRESS, MEM_UID_CL1_SIZE);
+                    ISO14443AAppendCRCA(Buffer, MEM_UID_CL1_SIZE);
+                    LogEntry(LOG_INFO_APP_CMD_READ, Buffer, 6);
+                    return 48;
+                }
+            }
+            else if ((Buffer[0] == CMD_AUTH)) {//READ UID
+                if (ISO14443ACheckCRCA(Buffer, CMD_READ_FRAME_SIZE)) {
+                    //return 0 as random
+                    Buffer[0]=0x00;
+                    Buffer[1]=0x00;
+                    Buffer[2]=0x00;
+                    Buffer[3]=0x00;
+                    LogEntry(LOG_INFO_APP_CMD_READ, Buffer, 6);
+                    return 32;
+                }
+            }
+            else {
+                /* Unknown command. Enter HALT state. */
+                LogEntry(LOG_INFO_APP_CMD_UNKNOWN, Buffer, (BitCount+7)/8);
+                State = STATE_IDLE;
+                return ISO14443A_APP_NO_RESPONSE;
+            }
+            break;
+            
+        case STATE_AUTHING:
+        case STATE_DECREMENT:
+        case STATE_INCREMENT:
+        case STATE_RESTORE:
+            /* When we reach here, a decrement, increment or restore command has
+             * been issued earlier and the reader is now sending the data. First,
+             * decrypt the data and check CRC. Read data from the requested block
+             * address into the global block buffer and check for integrity. Then
+             * add or subtract according to issued command if necessary and store
+             * the block back into the global block buffer. */
+            Crypto1ByteArray(Buffer, MEM_VALUE_SIZE + ISO14443A_CRCA_SIZE);
+            
+            if (ISO14443ACheckCRCA(Buffer, MEM_VALUE_SIZE )) {
+                MemoryReadBlock(BlockBuffer, (uint16_t) CurrentAddress * MEM_BYTES_PER_BLOCK, MEM_BYTES_PER_BLOCK);
+                
+                if (CheckValueIntegrity(BlockBuffer)) {
+                    uint32_t ParamValue;
+                    uint32_t BlockValue;
+                    
+                    ValueFromBlock(&ParamValue, Buffer);
+                    ValueFromBlock(&BlockValue, BlockBuffer);
+                    
+                    if (State == STATE_DECREMENT) {
+                        LogEntry(LOG_INFO_APP_CMD_DEC, Buffer, MEM_VALUE_SIZE + ISO14443A_CRCA_SIZE);
+                        BlockValue -= ParamValue;
+                    } else if (State == STATE_INCREMENT) {
+                        LogEntry(LOG_INFO_APP_CMD_INC, Buffer, MEM_VALUE_SIZE + ISO14443A_CRCA_SIZE);
+                        BlockValue += ParamValue;
+                    } else if (State == STATE_RESTORE) {
+                        LogEntry(LOG_INFO_APP_CMD_RESTORE, Buffer, MEM_VALUE_SIZE + ISO14443A_CRCA_SIZE);
+                        /* Do nothing */
+                    }
+                    
+                    ValueToBlock(BlockBuffer, BlockValue);
+                    
+                    State = STATE_AUTHED_IDLE;
+                    /* No ACK response on value commands part 2 */
+                    return ISO14443A_APP_NO_RESPONSE;
+                } else {
+                    /* Not sure if this is the correct error code.. */
+                    Buffer[0] = NAK_OTHER_ERROR ^ Crypto1Nibble();
+                }
+            } else {
+                /* CRC Error. */
+                LogEntry(LOG_ERR_APP_CHECKSUM_FAIL, Buffer, 4);
+                Buffer[0] = NAK_CRC_ERROR ^ Crypto1Nibble();
+            }
+            
+            State = STATE_AUTHED_IDLE;
+            return ACK_NAK_FRAME_SIZE;
+            break;
+            
+            
+        default:
+            /* Unknown state? Should never happen. */
+            break;
+    }
+    
     /* No response has been sent, when we reach here */
     return ISO14443A_APP_NO_RESPONSE;
 }
