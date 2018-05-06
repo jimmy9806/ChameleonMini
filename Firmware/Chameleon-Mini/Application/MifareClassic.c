@@ -1127,7 +1127,7 @@ uint16_t FM11RF005SHAppProcess(uint8_t* Buffer, uint16_t BitCount)
                     return 48;
                 }
             }
-            else if ((Buffer[0] == CMD_AUTH)) {//READ UID
+            else if ((Buffer[0] == CMD_AUTH_A)) {//READ UID
                 if (ISO14443ACheckCRCA(Buffer, CMD_READ_FRAME_SIZE)) {
                     //return 0 as random
                     Buffer[0]=0x00;
