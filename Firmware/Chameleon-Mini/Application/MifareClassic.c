@@ -1073,6 +1073,7 @@ uint16_t MifareClassicAppProcess(uint8_t* Buffer, uint16_t BitCount)
     /* No response has been sent, when we reach here */
     return ISO14443A_APP_NO_RESPONSE;
 }
+//APDU NOT IMPLEMENTED
 uint16_t JCOPAppProcess(uint8_t* Buffer, uint16_t BitCount)
 {
     switch(State) {
@@ -1114,7 +1115,6 @@ uint16_t JCOPAppProcess(uint8_t* Buffer, uint16_t BitCount)
                         /* According to ISO14443, we must not send anything
                          * in order to acknowledge the HALT command. */
                         LogEntry(LOG_INFO_APP_CMD_HALT, NULL, 0);
-                        
                         State = STATE_HALT;
                         return ISO14443A_APP_NO_RESPONSE;
                     } else {
