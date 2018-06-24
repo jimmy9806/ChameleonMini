@@ -11,7 +11,7 @@ import datetime
 def verboseLog(text):
     formatString = "[{}] {}"
     timeString = datetime.datetime.utcnow()
-    print(formatString.format(timeString, text), file=sys.stderr)
+#print(formatString.format(timeString, text), file=sys.stderr)
     
 # Command funcs
 def cmdInfo(chameleon, arg):

@@ -388,6 +388,14 @@ void FM11RF005SHAppInit(void)
     FromHalt = false;
 }
 
+void JCOPAppInit(void)
+{
+    State = STATE_IDLE;
+    CardATQAValue = 0x0004;//rf005sh
+    CardSAKValue = 0x28;//rf005sh
+    FromHalt = false;
+}
+
 void MifareClassicAppInit1K(void)
 {
     State = STATE_IDLE;
@@ -1065,7 +1073,80 @@ uint16_t MifareClassicAppProcess(uint8_t* Buffer, uint16_t BitCount)
     /* No response has been sent, when we reach here */
     return ISO14443A_APP_NO_RESPONSE;
 }
-
+uint16_t JCOPAppProcess(uint8_t* Buffer, uint16_t BitCount)
+{
+    switch(State) {
+        case STATE_IDLE:
+        case STATE_HALT:
+            FromHalt = State == STATE_HALT;
+            if (ISO14443AWakeUp(Buffer, &BitCount, CardATQAValue, FromHalt)) {
+                State = STATE_READY1;
+                return BitCount;
+            }
+            break;
+            
+        case STATE_READY1:
+            if (ISO14443AWakeUp(Buffer, &BitCount, CardATQAValue, FromHalt)) {
+                State = FromHalt ? STATE_HALT : STATE_IDLE;
+                return ISO14443A_APP_NO_RESPONSE;
+            } else if (Buffer[0] == ISO14443A_CMD_SELECT_CL1) {
+                uint8_t UidCL1[ISO14443A_CL_UID_SIZE];
+                MemoryReadBlock(UidCL1, MEM_UID_CL1_ADDRESS, MEM_UID_CL1_SIZE);
+                if (ISO14443ASelect(Buffer, &BitCount, UidCL1, CardSAKValue)) {
+                    AccessAddress = 0xff; /* invalid, force reload */
+                    State = STATE_ACTIVE;
+                }
+                return BitCount;
+            } else {
+                /* Unknown command. Enter HALT state. */
+                State = STATE_HALT;
+            }
+            
+        case STATE_ACTIVE:
+            if (ISO14443AWakeUp(Buffer, &BitCount, CardATQAValue, FromHalt)) {
+                State = FromHalt ? STATE_HALT : STATE_IDLE;
+                return ISO14443A_APP_NO_RESPONSE;
+            } else if (Buffer[0] == CMD_HALT) {
+                /* Halts the tag. According to the ISO14443, the second
+                 * byte is supposed to be 0. */
+                if (Buffer[1] == 0) {
+                    if (ISO14443ACheckCRCA(Buffer, CMD_HALT_FRAME_SIZE)) {
+                        /* According to ISO14443, we must not send anything
+                         * in order to acknowledge the HALT command. */
+                        LogEntry(LOG_INFO_APP_CMD_HALT, NULL, 0);
+                        
+                        State = STATE_HALT;
+                        return ISO14443A_APP_NO_RESPONSE;
+                    } else {
+                        Buffer[0] = NAK_CRC_ERROR;
+                        return ACK_NAK_FRAME_SIZE;
+                    }
+                } else {
+                    Buffer[0] = NAK_INVALID_ARG;
+                    return ACK_NAK_FRAME_SIZE;
+                }
+            }
+            else {
+                /* Unknown command. Enter HALT state. */
+                LogEntry(LOG_INFO_APP_CMD_UNKNOWN, Buffer, (BitCount+7)/8);
+                State = STATE_IDLE;
+                return ISO14443A_APP_NO_RESPONSE;
+            }
+            break;
+            
+        case STATE_AUTHING:
+        case STATE_DECREMENT:
+        case STATE_INCREMENT:
+        case STATE_RESTORE:
+            break;
+        default:
+            /* Unknown state? Should never happen. */
+            break;
+    }
+    
+    /* No response has been sent, when we reach here */
+    return ISO14443A_APP_NO_RESPONSE;
+}
 uint16_t FM11RF005SHAppProcess(uint8_t* Buffer, uint16_t BitCount)
 {
     switch(State) {

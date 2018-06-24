@@ -883,6 +883,7 @@ uint16_t Reader14443AAppProcess(uint8_t* Buffer, uint16_t BitCount)
                 Selected = false;
                 return 0;
             } else {
+                TerminalSendStringP(PSTR("NOCARD:\t"));
                 return BitCount;
             }
         }

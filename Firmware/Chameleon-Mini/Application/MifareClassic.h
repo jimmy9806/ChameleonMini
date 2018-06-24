@@ -16,6 +16,7 @@
 #define MIFARE_CLASSIC_4K_MEM_SIZE  4096
 
 void FM11RF005SHAppInit(void);
+void JCOPAppInit(void);
 void MifareClassicAppInit1K(void);
 void MifareClassicAppInit4K(void);
 void MifareClassicAppInit1K7B(void);
@@ -25,6 +26,7 @@ void MifareClassicAppTask(void);
 
 uint16_t MifareClassicAppProcess(uint8_t* Buffer, uint16_t BitCount);
 uint16_t FM11RF005SHAppProcess(uint8_t* Buffer, uint16_t BitCount);
+uint16_t JCOPAppProcess(uint8_t* Buffer, uint16_t BitCount);
 
 void MifareClassicGetUid(ConfigurationUidType Uid);
 void MifareClassicSetUid(ConfigurationUidType Uid);
